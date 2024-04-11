@@ -23,7 +23,7 @@ func (su *storageUser) GetUserByEmail(email string) (*user.User, error) {
 	q := `SELECT * FROM users WHERE email = ?`
 	row := su.db.QueryRow(q, email)
 	if err := row.Scan(&u.ID, &u.Email, &u.Username, &u.HashedPassword, &u.PhoneNumber, &u.BirthDate, &u.Role); err != nil {
-		if err.Error() == sql.ErrNoRows.Error() {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, customError.NotFoundError
 		}
 		return nil, err
@@ -36,7 +36,7 @@ func (su *storageUser) GetUserById(id uint64) (*user.User, error) {
 	q := `SELECT * FROM users WHERE users.user_id = ?`
 	row := su.db.QueryRow(q, id)
 	if err := row.Scan(&u.ID, &u.Email, &u.Username, &u.HashedPassword, &u.PhoneNumber, &u.BirthDate, &u.Role); err != nil {
-		if err.Error() == sql.ErrNoRows.Error() {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, customError.NotFoundError
 		}
 		return nil, err
@@ -49,7 +49,7 @@ func (su *storageUser) GetUserPasswordById(id int64) (*user.AuthDTO, error) {
 	q := `SELECT user_id, password FROM users WHERE users.user_id = ?`
 	row := su.db.QueryRow(q, id)
 	if err := row.Scan(&u.ID, &u.HashedPassword); err != nil {
-		if err.Error() == sql.ErrNoRows.Error() {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, customError.NotFoundError
 		}
 		return nil, err
@@ -62,7 +62,7 @@ func (su *storageUser) GetUserPasswordByEmail(email string) (*user.AuthDTO, erro
 	q := `SELECT user_id, password FROM users WHERE users.email = ?`
 	row := su.db.QueryRow(q, email)
 	if err := row.Scan(&u.ID, &u.HashedPassword); err != nil {
-		if err.Error() == sql.ErrNoRows.Error() {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, customError.NotFoundError
 		}
 		return nil, err
@@ -84,63 +84,44 @@ func (su *storageUser) UpdateUser(u *user.User) error {
 	if err != nil {
 		return err
 	}
-	t := &user.User{
-		ID:             existedUser.ID,
-		Email:          existedUser.Email,
-		Username:       existedUser.Username,
-		HashedPassword: existedUser.HashedPassword,
-		PhoneNumber:    existedUser.PhoneNumber,
-		BirthDate:      existedUser.BirthDate,
-		Role:           existedUser.Role,
-	}
-	q, updates := generateUpdateQuery(u, existedUser, t)
+	q, updates := generateUpdateQuery(u, existedUser)
 	if q == "" {
-		return errors.New(customError.NothingToUpdateUserErrorMsg)
+		return customError.NothingToUpdateError
 	}
 	_, err = su.db.Exec(q, append(updates, u.ID)...)
 	if err != nil {
 		return err
 	}
-	u.Email = t.Email
-	u.PhoneNumber = t.PhoneNumber
-	u.Username = t.Username
-	u.BirthDate = t.BirthDate
-	u.HashedPassword = t.HashedPassword
 	return nil
 }
 
-func generateUpdateQuery(toUpdateUser, existedUser, t *user.User) (string, []interface{}) {
+func generateUpdateQuery(toUpdateUser, existedUser *user.User) (string, []interface{}) {
 	var updateQuery string
 	var updates []interface{}
 
 	if toUpdateUser.Email != "" && toUpdateUser.Email != existedUser.Email {
 		updateQuery += "email=?, "
 		updates = append(updates, toUpdateUser.Email)
-		t.Email = toUpdateUser.Email
 	}
 
 	if toUpdateUser.Username != "" && toUpdateUser.Username != existedUser.Username {
 		updateQuery += "username=?, "
 		updates = append(updates, toUpdateUser.Username)
-		t.Username = toUpdateUser.Username
 	}
 
 	if toUpdateUser.HashedPassword != "" && toUpdateUser.HashedPassword != existedUser.HashedPassword {
 		updateQuery += "password=?, "
 		updates = append(updates, toUpdateUser.HashedPassword)
-		t.HashedPassword = toUpdateUser.HashedPassword
 	}
 
 	if toUpdateUser.PhoneNumber != "" && toUpdateUser.PhoneNumber != existedUser.PhoneNumber {
 		updateQuery += "phone_number=?, "
 		updates = append(updates, toUpdateUser.PhoneNumber)
-		t.PhoneNumber = toUpdateUser.PhoneNumber
 	}
 
 	if toUpdateUser.BirthDate != "" && toUpdateUser.BirthDate != existedUser.BirthDate {
 		updateQuery += "birth_date=?, "
 		updates = append(updates, toUpdateUser.BirthDate)
-		t.BirthDate = toUpdateUser.BirthDate
 	}
 
 	if len(updates) == 0 {
@@ -152,29 +133,3 @@ func generateUpdateQuery(toUpdateUser, existedUser, t *user.User) (string, []int
 	query := fmt.Sprintf("UPDATE users SET %s WHERE user_id=?", updateQuery)
 	return query, updates
 }
-
-//func (su *storageUser) GetUserByToken(token string) (u *user.User, err error) {
-//	q := `SELECT * FROM users WHERE users.session_token = ?`
-//	row := su.db.QueryRow(q, token)
-//	if err = row.Scan(&u.ID, &u.Username, &u.Email, &u.BirthDate, &u.PhoneNumber, &u.Role, &u.HashedPassword); err != nil {
-//		log.Printf("Error query:%s\n", err)
-//		return
-//	}
-//	log.Printf("Succeed query%s\n", u.Username)
-//	return
-//}
-
-//func (su *storageUser) UpdateUserToken(u user.User, token string) error {
-//	u2, err := su.GetUserById(u.ID)
-//	if err != nil {
-//		return err
-//	}
-//	q := `UPDATE users SET session_token=? WHERE user_id=?`
-//	_, err = su.db.Exec(q, token)
-//	if err != nil {
-//		log.Printf("Update error:%s\n", err)
-//		return err
-//	}
-//	log.Printf("User %s has been update\n", u2.Email)
-//	return nil
-//}

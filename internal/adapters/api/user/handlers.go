@@ -7,16 +7,18 @@ import (
 	"auth-api/internal/midlleware"
 	"auth-api/internal/utils"
 	"encoding/json"
+	"errors"
+	"io"
+	"log"
 	"net/http"
 )
 
 const (
 	createUserURL   = "/register"
 	loginUserURL    = "/login"
-	userProfileURL  = "/profile"
 	userSettingsURL = "/settings"
-	POST            = "POST "
 	GET             = "GET "
+	POST            = "POST "
 	PUT             = "PUT "
 	PATCH           = "PATCH "
 	DELETE          = "DELETE "
@@ -38,36 +40,55 @@ func NewHandler(service userDomain.ServiceUser) api.Handler {
 
 func (h *handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var dtoUser = &userDomain.CreateUserDTO{}
-	if json.NewDecoder(r.Body).Decode(dtoUser) != nil {
-		http.Error(w, "invalid request payload", http.StatusBadRequest)
-		return
+	if err := json.NewDecoder(r.Body).Decode(dtoUser); err != nil {
+		var unmarshalTypeError *json.UnmarshalTypeError
+		var syntaxError *json.SyntaxError
+		if errors.As(err, &unmarshalTypeError) {
+			http.Error(w, "Invalid request data type", http.StatusBadRequest)
+			return
+		} else if errors.As(err, &syntaxError) || errors.Is(err, io.ErrUnexpectedEOF) {
+			http.Error(w, "Invalid JSON syntax", http.StatusBadRequest)
+			return
+		} else if errors.Is(err, io.EOF) {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		} else {
+			log.Println(err.Error())
+			http.Error(w, "Unexpected error", http.StatusInternalServerError)
+			return
+		}
 	}
 	if err := h.userService.CreateUser(r.Context(), dtoUser); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
+		if errors.Is(err, customError.CreateUserBadInputError) {
+			http.Error(w, "Invalid email or password", http.StatusBadRequest)
+			return
+		} else if errors.Is(err, customError.BusyUpdateEmailError) {
+			http.Error(w, "Email is busy", http.StatusBadRequest)
+			return
+		} else {
+			http.Error(w, "Unexpected error", http.StatusInternalServerError)
+			log.Panic(err.Error())
+			return
+		}
 	}
-	utils.RenderJSON(w, http.StatusCreated, "user has been created")
+	utils.RenderJSON(w, http.StatusCreated, "User has been created")
 }
 
 func (h *handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	var dtoUser = &userDomain.UpdateUserDTO{}
 	if err := json.NewDecoder(r.Body).Decode(dtoUser); err != nil {
-		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
-			return
-		}
-		http.Error(w, "invalid request payload", http.StatusBadRequest)
+		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
 		return
 	}
 	u, err := h.userService.UpdateUser(r.Context(), dtoUser)
 	if err != nil {
-		if err.Error() == customError.NothingToUpdateError.Error() {
-			w.Header().Set("X-Error-Message", "Resource not modified")
-			http.Error(w, err.Error(), http.StatusNotModified)
+		if errors.Is(err, customError.NothingToUpdateError) {
+			http.Error(w, "No fields have been changed", http.StatusBadRequest)
 			return
-		} else if err.Error() == customError.NotFoundError.Error() {
-			http.Error(w, "not found", http.StatusNotFound)
+		} else if errors.Is(err, customError.NotFoundError) {
+			http.Error(w, "Not found", http.StatusNotFound)
 			return
+		} else if errors.Is(err, customError.UpdateUserBadInputError) {
+			http.Error(w, "Invalid password", http.StatusBadRequest)
 		}
 		return
 	}
@@ -77,16 +98,17 @@ func (h *handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 func (h *handler) LoginUser(w http.ResponseWriter, r *http.Request) {
 	var dtoUser = &userDomain.CreateUserDTO{}
 	if json.NewDecoder(r.Body).Decode(dtoUser) != nil {
-		http.Error(w, "invalid request payload", http.StatusBadRequest)
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 	token, err := h.userService.Login(r.Context(), dtoUser)
 	if err != nil {
-		if err.Error() == customError.LoginError.Error() {
+		if errors.Is(err, customError.LoginError) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		} else {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			log.Println(err.Error())
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 	}

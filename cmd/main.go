@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	log.SetFlags(log.Ldate | log.Ltime | log.Llongfile)
 	cfg, err := config.LoadConfiguration("config.json")
 	if err != nil {
 		log.Panicf("cannot load configuration: %v", err)

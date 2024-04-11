@@ -14,11 +14,11 @@ import (
 var secretKey = []byte(os.Getenv("SECRET_KEY"))
 
 type ServiceUser interface {
-	GetUserById(ctx context.Context, id uint64) (*User, error)
-	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	CreateUser(ctx context.Context, dto *CreateUserDTO) error
 	UpdateUser(ctx context.Context, dto *UpdateUserDTO) (*User, error)
 	Login(ctx context.Context, dto *CreateUserDTO) (*LoginResponseDTO, error)
+	//GetUserById(ctx context.Context, id uint64) (*User, error)
+	//GetUserByEmail(ctx context.Context, email string) (*User, error)
 }
 
 type serviceUser struct {
@@ -46,11 +46,11 @@ func (s *serviceUser) CreateUser(ctx context.Context, dto *CreateUserDTO) error 
 	}
 	_, err = s.GetUserByEmail(ctx, newUser.Email)
 	if err == nil {
-		return errors.New("user already exist")
+		return customError.BusyUpdateEmailError
 	}
 	p, err := bcrypt.GenerateFromPassword([]byte(dto.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return err
+		return customError.CreateUserBadInputError
 	}
 	u := &User{Email: dto.Email, HashedPassword: string(p)}
 	if s.storage.CreateUser(u) != nil {
@@ -73,7 +73,7 @@ func (s *serviceUser) UpdateUser(ctx context.Context, dto *UpdateUserDTO) (*User
 	if b != "" {
 		p, err := bcrypt.GenerateFromPassword([]byte(dto.Password), bcrypt.DefaultCost)
 		if err != nil {
-			return nil, err
+			return nil, customError.UpdateUserBadInputError
 		} else {
 			dto.Password = string(p)
 		}
@@ -85,23 +85,24 @@ func (s *serviceUser) UpdateUser(ctx context.Context, dto *UpdateUserDTO) (*User
 		HashedPassword: dto.Password,
 		PhoneNumber:    dto.PhoneNumber,
 		BirthDate:      dto.BirthDate,
-		Role:           "",
 	}
 	err = s.storage.UpdateUser(u)
 	if err != nil {
 		return nil, err
 	}
-	//userUpdater(u, dto)
+	userUpdater(u, dto)
 	return u, nil
 }
 
 func (s *serviceUser) Login(ctx context.Context, dto *CreateUserDTO) (*LoginResponseDTO, error) {
 	u, err := s.getUserPasswordByEmail(ctx, dto.Email)
 	if err != nil {
-		return nil, errors.New("invalid email or password")
+		if errors.Is(err, customError.NotFoundError) {
+			return nil, customError.LoginError
+		}
 	}
 	if checkPassword([]byte(u.HashedPassword), []byte(dto.Password)) != nil {
-		return nil, errors.New("invalid email or password")
+		return nil, customError.LoginError
 	}
 	token, err := generateToken(u.ID)
 	if err != nil {
@@ -121,7 +122,7 @@ func (s *serviceUser) getUserPasswordByEmail(ctx context.Context, email string) 
 func dtoCreateValidator(dto *CreateUserDTO) (*User, error) {
 	u := &User{}
 	if dto.Email == "" || dto.Password == "" {
-		return nil, errors.New("invalid registration data")
+		return nil, customError.CreateUserBadInputError
 	}
 	u.Email = dto.Email
 	u.HashedPassword = dto.Password
@@ -130,7 +131,7 @@ func dtoCreateValidator(dto *CreateUserDTO) (*User, error) {
 
 func userUpdateValidator(dto *UpdateUserDTO) error {
 	if dto.Username == "" && dto.PhoneNumber == "" && dto.BirthDate == "" && dto.Password == "" && dto.Email == "" {
-		return errors.New("nothing to update")
+		return customError.NothingToUpdateError
 	}
 	return nil
 }
@@ -138,6 +139,10 @@ func userUpdateValidator(dto *UpdateUserDTO) error {
 func userUpdater(u *User, dto *UpdateUserDTO) (count int) {
 	if dto.Email != "" && u.Email != dto.Email {
 		u.Email = dto.Email
+		count++
+	}
+	if dto.Username != "" && u.Username != dto.Username {
+		u.Username = dto.Username
 		count++
 	}
 	if dto.Password != "" && u.HashedPassword != dto.Password {
@@ -150,10 +155,6 @@ func userUpdater(u *User, dto *UpdateUserDTO) (count int) {
 	}
 	if dto.PhoneNumber != "" && u.PhoneNumber != dto.PhoneNumber {
 		u.PhoneNumber = dto.PhoneNumber
-		count++
-	}
-	if dto.Username != "" && u.Username != dto.Username {
-		u.Username = dto.Username
 		count++
 	}
 	return
@@ -171,7 +172,7 @@ func generateToken(id uint64) (string, error) {
 	claims := &midlleware.Claims{
 		UserID: id,
 		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: time.Now().Add(time.Hour * 24).Unix(), // Устанавливаем срок действия токена на 24 часа
+			ExpiresAt: time.Now().Add(time.Hour * 24).Unix(),
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
