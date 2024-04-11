@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/dgrijalva/jwt-go"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -19,6 +21,29 @@ type Claims struct {
 }
 type Uid struct {
 	ID uint64 `json:"user_id"`
+}
+
+func LoggerRequestMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Request: %s %s\n", r.Method, r.URL.Path)
+		log.Print("Request Headers: ")
+		for name, values := range r.Header {
+			for _, value := range values {
+				log.Printf("%s: %s ", name, value)
+			}
+		}
+		log.Println()
+		if r.Body != nil {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				log.Println("Failed to read request body:", err)
+			}
+			defer r.Body.Close()
+			log.Println("Request Body:", string(body))
+			r.Body = io.NopCloser(bytes.NewBuffer(body))
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func TimeoutMiddleware(next http.Handler) http.Handler {
@@ -38,7 +63,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 		cookie, err := r.Cookie("token")
 		if err != nil {
-			if err.Error() == http.ErrNoCookie.Error() {
+			if errors.Is(err, http.ErrNoCookie) {
 				http.Error(w, "Token not found", http.StatusUnauthorized)
 				return
 			}
@@ -58,7 +83,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return secretKey, nil
 		})
 		if err != nil {
-			if err.Error() == jwt.ErrSignatureInvalid.Error() {
+			if errors.Is(err, jwt.ErrSignatureInvalid) {
 				http.Error(w, "Invalid token signature", http.StatusUnauthorized)
 				return
 			}
